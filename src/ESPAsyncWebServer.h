@@ -77,6 +77,11 @@ inline bool canAllocateBlock(size_t bytes) {
 #define ASYNCWEBSERVER_USE_CHUNK_INFLIGHT 1
 #endif
 
+// The smallest chunk a heap-paced transfer sends; see AsyncWebServer::setMinFreeHeapForTransfers().
+#ifndef ASYNCWEBSERVER_TRANSFER_MIN_CHUNK
+#define ASYNCWEBSERVER_TRANSFER_MIN_CHUNK 256
+#endif
+
 class AsyncWebServer;
 class AsyncWebServerRequest;
 class AsyncWebServerResponse;
@@ -1143,6 +1148,7 @@ protected:
   std::list<std::unique_ptr<AsyncWebHandler>> _handlers;
   AsyncCallbackWebHandler *_catchAllHandler;
   static size_t _minFreeHeapForRequests;
+  static size_t _minFreeHeapForTransfers;
 
 public:
   AsyncWebServer(uint16_t port);
@@ -1160,6 +1166,18 @@ public:
   }
   static size_t minFreeHeapForRequests() {
     return _minFreeHeapForRequests;
+  }
+
+  // Transfers are paced by the heap while more than this much is free and paused below it. Each round of a
+  // response allocates its chunk and the TCP library copies it, so a round costs about twice the chunk: above
+  // the floor the chunk is limited to half of what is free over it, below the floor the round is skipped and
+  // the next poll retries. This bounds how far the transfers of a page load can take the heap down, which the
+  // request floor cannot: it is checked once, when a request starts. 0 (the default) disables the pacing.
+  static void setMinFreeHeapForTransfers(size_t bytes) {
+    _minFreeHeapForTransfers = bytes;
+  }
+  static size_t minFreeHeapForTransfers() {
+    return _minFreeHeapForTransfers;
   }
 
   tcp_state state() const {
