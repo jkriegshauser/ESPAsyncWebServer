@@ -393,20 +393,47 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
   _ackedLength += len;
   size_t space = request->client()->space();
 
+  if (_pending) {
+    // the round that the TCP library did not take last time goes out first; nothing new is read until it has
+    size_t taken = request->client()->add((const char *)_pending + _pendingSent, _pendingLen - _pendingSent, ASYNC_WRITE_FLAG_COPY);
+    if (taken) {
+      request->client()->send();
+      _writtenLength += taken;
+      _pendingSent += taken;
+#if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
+      _in_flight += taken;
+#endif
+    }
+    if (_pendingSent < _pendingLen) {
+      return 0;
+    }
+    free(_pending);
+    _pending = nullptr;
+    _pendingLen = 0;
+    _pendingSent = 0;
+    return taken;
+  }
+
   size_t headLen = _head.length();
   if (_state == RESPONSE_HEADERS) {
     if (space >= headLen) {
+      // the headers go in front of the first chunk; the space they take is accounted for below, where a
+      // round that is retried after one that sent nothing needs it too
       _state = RESPONSE_CONTENT;
-      space -= headLen;
     } else {
       String out = _head.substring(0, space);
-      _head = _head.substring(space);
-      _writtenLength += request->client()->write(out.c_str(), out.length());
+      size_t taken = request->client()->add(out.c_str(), out.length(), ASYNC_WRITE_FLAG_COPY);
+      if (taken) {
+        request->client()->send();
 #if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-      _in_flight += out.length();
-      --_in_flight_credit;  // take a credit
+        _in_flight += taken;
+        --_in_flight_credit;  // take a credit
 #endif
-      return out.length();
+      }
+      // what the TCP library did not take stays for the next round
+      _head = _head.substring(taken);
+      _writtenLength += taken;
+      return taken;
     }
   }
 
@@ -425,6 +452,12 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
       return 0;
     }
 #endif
+
+    // the headers that are still to be sent go in front of this round's chunk
+    if (space < headLen) {
+      return 0;
+    }
+    space -= headLen;
 
     size_t outLen;
     if (_chunked) {
@@ -482,11 +515,24 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     }
 
     if (outLen) {
-      _writtenLength += request->client()->write((const char *)buf, outLen);
+      size_t taken = request->client()->add((const char *)buf, outLen, ASYNC_WRITE_FLAG_COPY);
+      if (taken) {
+        request->client()->send();
+      }
+      _writtenLength += taken;
 #if ASYNCWEBSERVER_USE_CHUNK_INFLIGHT
-      _in_flight += outLen;
+      _in_flight += taken;
       --_in_flight_credit;  // take a credit
 #endif
+      if (taken < outLen) {
+        // The TCP library took less than the round, which happens when it has no memory for its copy of the
+        // data. The data is consumed from the source already, so keep the rest and send it first next time
+        // instead of going on without it.
+        _pending = buf;
+        _pendingLen = outLen;
+        _pendingSent = taken;
+        buf = nullptr;
+      }
     }
 
     if (_chunked) {
