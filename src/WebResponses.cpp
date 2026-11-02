@@ -459,6 +459,24 @@ size_t AsyncAbstractResponse::_ack(AsyncWebServerRequest *request, size_t len, u
     }
     space -= headLen;
 
+#if defined(ESP8266) || defined(ESP32)
+    // Pace the transfer by the heap: the buffer allocated below and the copy the TCP library makes of it both
+    // come out of the heap, so a round costs about twice what it sends, headers included. Below the floor
+    // nothing is sent and the next poll retries; above it the chunk is limited to half of what is free over
+    // the floor, so a round cannot take the heap below it.
+    if (AsyncWebServer::minFreeHeapForTransfers()) {
+      size_t freeHeap = ESP.getFreeHeap();
+      size_t floor = AsyncWebServer::minFreeHeapForTransfers();
+      if (freeHeap < floor + 2 * (ASYNCWEBSERVER_TRANSFER_MIN_CHUNK + headLen)) {
+        return 0;
+      }
+      size_t allowed = (freeHeap - floor) / 2 - headLen;
+      if (space > allowed) {
+        space = allowed;
+      }
+    }
+#endif
+
     size_t outLen;
     if (_chunked) {
       if (space <= 8) {
