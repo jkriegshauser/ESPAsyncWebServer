@@ -36,6 +36,8 @@ const char *fs::FileOpenMode::write = "w";
 const char *fs::FileOpenMode::append = "a";
 #endif
 
+size_t AsyncWebServer::_minFreeHeapForRequests = 0;
+
 AsyncWebServer::AsyncWebServer(uint16_t port) : _server(port) {
   _catchAllHandler = new AsyncCallbackWebHandler();
   _server.onClient(

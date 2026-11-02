@@ -1142,6 +1142,7 @@ protected:
   std::list<std::shared_ptr<AsyncWebRewrite>> _rewrites;
   std::list<std::unique_ptr<AsyncWebHandler>> _handlers;
   AsyncCallbackWebHandler *_catchAllHandler;
+  static size_t _minFreeHeapForRequests;
 
 public:
   AsyncWebServer(uint16_t port);
@@ -1149,6 +1150,17 @@ public:
 
   void begin();
   void end();
+
+  // Requests are refused while less than this much heap is free when their headers are complete: the
+  // connection is closed without a reply and without allocating anything. The accept-time floor of the TCP
+  // library sees only new connections; with keep-alive, every file of a page load is a request on a
+  // connection that was accepted while the heap was still fine. 0 (the default) disables the check.
+  static void setMinFreeHeapForRequests(size_t bytes) {
+    _minFreeHeapForRequests = bytes;
+  }
+  static size_t minFreeHeapForRequests() {
+    return _minFreeHeapForRequests;
+  }
 
   tcp_state state() const {
 #ifdef ESP8266
