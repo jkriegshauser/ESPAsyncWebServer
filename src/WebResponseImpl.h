@@ -40,6 +40,11 @@ private:
   size_t _in_flight_credit{2};
 #endif
   String _head;
+  // A round that the TCP library did not take in full, which happens when it has no memory for its copy of
+  // the data: it is sent first on the next ack or poll. The data is already consumed from the source.
+  uint8_t *_pending{nullptr};
+  size_t _pendingLen{0};
+  size_t _pendingSent{0};
   // Data is inserted into cache at begin().
   // This is inefficient with vector, but if we use some other container,
   // we won't be able to access it as contiguous array of bytes when reading from it,
@@ -53,7 +58,9 @@ protected:
 
 public:
   AsyncAbstractResponse(AwsTemplateProcessor callback = nullptr);
-  virtual ~AsyncAbstractResponse() {}
+  virtual ~AsyncAbstractResponse() {
+    free(_pending);
+  }
   void _respond(AsyncWebServerRequest *request) override final;
   size_t _ack(AsyncWebServerRequest *request, size_t len, uint32_t time) override final;
   virtual bool _sourceValid() const {
