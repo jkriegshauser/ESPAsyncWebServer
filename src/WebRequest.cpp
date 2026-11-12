@@ -211,7 +211,7 @@ void AsyncWebServerRequest::_onData(void *buf, size_t len) {
         if (_oom) {
           // a body parameter could not be stored, see _parseLine()
           _parseState = PARSE_REQ_FAIL;
-          _client->close(false);
+          _closePending = true;
           return;
         }
         _parseState = PARSE_REQ_END;
@@ -225,6 +225,13 @@ void AsyncWebServerRequest::_onData(void *buf, size_t len) {
 
 void AsyncWebServerRequest::_onPoll() {
   // os_printf("p\n");
+  if (_closePending) {
+    // a parser or handler asked for the close. Doing it here, outside their call, lets the disconnect
+    // callback delete this request safely; close(false) is not deferred by every TCP library (AsyncTCP
+    // on the ESP32 closes at once).
+    _client->close();
+    return;
+  }
   if (_response != NULL && _client != NULL && _client->canSend()) {
     if (!_response->_finished()) {
       _response->_ack(this, 0, 0);
@@ -240,6 +247,10 @@ void AsyncWebServerRequest::_onPoll() {
 
 void AsyncWebServerRequest::_onAck(size_t len, uint32_t time) {
   // os_printf("a:%u:%u\n", len, time);
+  if (_closePending) {
+    _client->close();
+    return;
+  }
   if (_response != NULL) {
     if (!_response->_finished()) {
       _response->_ack(this, len, time);
@@ -702,7 +713,7 @@ void AsyncWebServerRequest::_parseLine() {
       // a header or a parameter could not be stored: fail the request instead of handling it with part of
       // them. The connection is closed on the next poll, not here, because the caller still uses this request.
       _parseState = PARSE_REQ_FAIL;
-      _client->close(false);
+      _closePending = true;
       return;
     }
     if (!_temp.length()) {
@@ -712,7 +723,7 @@ void AsyncWebServerRequest::_parseLine() {
         // too little heap left to serve anything: refuse like the accept floor does, without allocating.
         // The connection is closed on the next poll, not here, because the caller still uses this request.
         _parseState = PARSE_REQ_FAIL;
-        _client->close(false);
+        _closePending = true;
         return;
       }
 #endif
@@ -721,7 +732,7 @@ void AsyncWebServerRequest::_parseLine() {
       if (_oom) {
         // a path parameter could not be stored
         _parseState = PARSE_REQ_FAIL;
-        _client->close(false);
+        _closePending = true;
         return;
       }
       if (_expectingContinue) {
@@ -776,7 +787,7 @@ void AsyncWebServerRequest::_send() {
     // request while the code that called us is still using it.
     if (!_response) {
       _sent = true;
-      _client->close(false);
+      _closePending = true;
       return;
     }
 
