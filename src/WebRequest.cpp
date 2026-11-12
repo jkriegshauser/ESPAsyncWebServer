@@ -719,7 +719,7 @@ void AsyncWebServerRequest::_parseLine() {
     if (!_temp.length()) {
       // end of headers
 #if defined(ESP8266) || defined(ESP32)
-      if (AsyncWebServer::minFreeHeapForRequests() && ESP.getFreeHeap() < AsyncWebServer::minFreeHeapForRequests()) {
+      if (AsyncWebServer::minFreeHeapForRequests() && asyncsrv::freeHeapForBuffers() < AsyncWebServer::minFreeHeapForRequests()) {
         // too little heap left to serve anything: refuse like the accept floor does, without allocating.
         // The connection is closed on the next poll, not here, because the caller still uses this request.
         _parseState = PARSE_REQ_FAIL;
